@@ -1,11 +1,11 @@
 # SPYx Venue Arbitrage Scanner
 
-Scanner inicial para medir oportunidades entre:
+Scanner, paper trader, and guarded live-execution scaffold for SPYx arbitrage between:
 
 - MEXC spot `SPYx/USDT`
-- Raydium en Solana, usando el mint `XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`
+- Raydium CLMM pools on Solana, using mint `XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W`
 
-Esta primera versión es **solo lectura / paper scanner**. No usa API keys, no ejecuta órdenes, no retira fondos y no firma transacciones.
+The scanner and paper trader are read-only. Live mode is available behind explicit safety gates and should only be used after dry-runs, balance checks, and reconciliation are verified.
 
 ## Setup
 
@@ -15,60 +15,133 @@ cp .env.example .env
 npm run scan
 ```
 
-The only environment file you should edit is the root `.env`. Live mode reads the same file; do not create a separate `live/.env`.
+Edit only the repository root `.env`. Live mode reads the same file; do not create a separate `live/.env`.
 
-Para una sola medición:
+Run one scan:
 
 ```bash
 npm run scan:once
 ```
 
-Para paper trading con simulación de settlement:
+Run paper trading with simulated settlement:
 
 ```bash
 npm run paper
 ```
 
-## Qué mide
+Run a scan speed stress test:
 
-Para cada tamaño en `TRADE_SIZES_USD`, compara dos rutas:
+```bash
+npm run scan:stress
+```
 
-- `MEXC_TO_RAYDIUM`: comprar SPYx en MEXC, retirar por Solana y vender en Raydium por USDC.
-- `RAYDIUM_TO_MEXC`: comprar SPYx en Raydium con USDC, depositar en MEXC y vender en MEXC por USDT.
+## What It Measures
 
-El modo `paper` abre simulaciones cuando `market` supera `PAPER_MIN_MARKET_SPREAD_BPS` o cuando `net` ya es positivo.
+For each size in `TRADE_SIZES_USD`, the scanner compares the configured routes:
 
-Con `PAPER_REALISTIC_MODE=true`, el paper intenta parecerse más a live:
+- `MEXC_TO_RAYDIUM`: buy SPYx on MEXC, withdraw over Solana, and sell on Raydium for USDC.
+- `RAYDIUM_TO_MEXC`: buy SPYx on Raydium with USDC, deposit to MEXC, and sell on MEXC for USDT.
 
-- abre solo una oportunidad por scan, la mejor que quepa en `PAPER_CAPITAL_USD`;
-- bloquea ese capital hasta `PAPER_REALISTIC_SETTLEMENT_DELAY_MS`;
-- para `RAYDIUM_TO_MEXC`, calcula el SPYx vendible en MEXC como `on-chain amount / scaledUiAmount multiplier`;
-- trunca la venta a `PAPER_MEXC_BASE_PRECISION`, que para MEXC SPYx suele ser `3`;
-- resta fee taker de MEXC, buffer de settlement, `SOLANA_TX_COST_USD` y `PAPER_LIVE_EXTRA_COST_USD`.
+Raydium quotes are computed locally with Raydium SDK v2 from Solana RPC pool state. The scanner does not depend on Raydium Trade API for quotes.
 
-Con `PAPER_REALISTIC_MODE=false`, conserva el modo legacy y crea resoluciones futuras según `PAPER_SETTLEMENT_DELAYS_MS`.
+The result accounts for:
 
-El resultado resta:
+- MEXC taker fee
+- configured Raydium slippage
+- settlement risk buffer
+- estimated Solana transaction cost
+- optional MEXC withdrawal fee in SPYx
+- SPYx Token-2022 `scaledUiAmountConfig`
+- MEXC SPYx base precision truncation
 
-- fee taker de MEXC
-- slippage configurado para Raydium
-- buffer de riesgo de settlement
-- coste estimado de transacción Solana
-- fee opcional de withdrawal de MEXC en SPYx
+SPYx uses Token-2022 `scaledUiAmountConfig`. For `RAYDIUM_TO_MEXC`, the sellable amount on MEXC is modeled as:
 
-SPYx usa `scaledUiAmountConfig` de Token-2022. Para `RAYDIUM_TO_MEXC`, la cantidad vendible en MEXC se modela como `on-chain amount / scaledUiAmount multiplier`, que es el drag que aparece como `scaleDrag`.
+```text
+sellable = floor((on-chain amount / scaledUiAmount multiplier), MEXC_BASE_PRECISION)
+```
 
-## Archivos importantes
+The multiplier drag is shown as `scaleDrag`.
 
-- `src/index.ts`: loop principal.
-- `src/config.ts`: configuración por variables de entorno.
-- `src/opportunity.ts`: cálculo de rutas y spread neto.
-- `src/clients/mexc.ts`: order book de MEXC.
-- `src/clients/raydium.ts`: quotes locales de Raydium CLMM con SDK v2.
-- `src/clients/solana.ts`: lectura de decimales del mint.
-- `data/opportunities.csv`: log generado con cada scan.
-- `data/paper-trades.csv`: aperturas y resoluciones del paper trader.
+## Paper Mode
 
-## Siguiente paso
+Paper mode opens simulated positions when `market` exceeds `PAPER_MIN_MARKET_SPREAD_BPS` or when `net` is already positive.
 
-Deja `npm run paper` corriendo varias horas. Si el `Paper live-adjusted` sigue positivo de forma repetida, el siguiente módulo debería ser ejecución semi-manual con confirmación antes de enviar órdenes reales.
+With `PAPER_REALISTIC_MODE=true`, paper mode is closer to live behavior:
+
+- opens only the best opportunity per scan;
+- respects available capital through `PAPER_CAPITAL_USD`;
+- locks that capital until `PAPER_REALISTIC_SETTLEMENT_DELAY_MS`;
+- for `RAYDIUM_TO_MEXC`, sells only the MEXC-creditable SPYx amount;
+- floors the MEXC sell quantity to `PAPER_MEXC_BASE_PRECISION`, usually `3` for SPYx;
+- subtracts MEXC taker fee, settlement buffer, `SOLANA_TX_COST_USD`, and `PAPER_LIVE_EXTRA_COST_USD`.
+
+With `PAPER_REALISTIC_MODE=false`, paper mode uses the legacy multi-delay model and creates future resolutions from `PAPER_SETTLEMENT_DELAYS_MS`.
+
+## Telegram Alerts
+
+Telegram can send:
+
+- startup notifications;
+- immediate opportunity alerts;
+- hourly reports with scan count, rate limits, opportunity duration, best spreads, and paper PnL.
+
+Configure:
+
+```env
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+TELEGRAM_MIN_NET_SPREAD_BPS=25
+TELEGRAM_REPORT_INTERVAL_MS=3600000
+```
+
+`TELEGRAM_MIN_NET_SPREAD_BPS` can be lower than the trading threshold if you want early warning signals.
+
+## Live Mode
+
+Live mode lives in `live/` and is protected by explicit execution gates:
+
+```env
+LIVE_MODE=execute
+LIVE_EXECUTION_ENABLED=true
+LIVE_CONFIRMATION=I_UNDERSTAND_REAL_MONEY
+```
+
+The active risk policy must also set `enabled=true` and explicitly allow the required actions. See [live/README.md](live/README.md).
+
+Useful commands:
+
+```bash
+npm run live:check
+npm run live:probe-dry-run
+npm run live:probe
+npm run live:transfer-to-mexc
+npm run live:sell-mexc-spyx
+npm run live:pnl-report
+```
+
+## Important Files
+
+- `src/index.ts`: scanner and paper loop.
+- `src/config.ts`: environment configuration.
+- `src/opportunity.ts`: route and net-spread calculations.
+- `src/clients/mexc.ts`: MEXC order book client.
+- `src/clients/raydium.ts`: local Raydium CLMM quotes with SDK v2.
+- `src/clients/solana.ts`: token decimals and scaled UI multiplier reads.
+- `src/telegram.ts`: Telegram alerts and hourly reports.
+- `src/stress-scan.ts`: scan-speed stress test.
+- `live/`: guarded real-money execution tools.
+- `data/opportunities.csv`: generated scan log.
+- `data/paper-trades.csv`: generated paper-trade log.
+
+## Safety Notes
+
+Never commit `.env`, private keys, live state, generated data, or risk-policy files with real settings. These paths are ignored by `.gitignore`.
+
+Recommended workflow before running live:
+
+1. Run `npm run scan` and `npm run paper` for several hours.
+2. Confirm `Paper live-adjusted` remains positive after realistic costs.
+3. Run `npm run live:check`.
+4. Run `npm run live:probe-dry-run`.
+5. Only then consider a very small `npm run live:probe` under strict risk caps.
