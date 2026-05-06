@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+data/
+*.log
+config-backups/
+live/.env.live
+live/.env
+live/.env.*
+live/risk-policy.json
+live/keys/
+live/state/
+*.pem
+*.key
+*.secret

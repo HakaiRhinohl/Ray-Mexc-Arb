@@ -1,0 +1,19 @@
+{
+  "enabled": false,
+  "allowRaydiumSwaps": false,
+  "allowMexcOrders": false,
+  "allowMexcWithdrawals": false,
+  "allowMexcDeposits": false,
+  "allowedDirections": ["RAYDIUM_TO_MEXC"],
+  "maxTradeNotionalUsd": 25,
+  "maxDailyLossUsd": 10,
+  "maxOpenTransfers": 1,
+  "minNetSpreadBps": 150,
+  "maxSlippageBps": 50,
+  "requireManualConfirmation": true,
+  "notes": [
+    "Set enabled=true only after balances, deposit addresses, and dry-run reconciliation are verified.",
+    "MEXC withdrawals require a whitelisted Solana address and the MEXC API permission SPOT_WITHDRAW_WRITE.",
+    "Keep allowMexcWithdrawals=false while testing RAYDIUM_TO_MEXC only."
+  ]
+}
